@@ -3,6 +3,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ViewPatterns #-}
 
+module Text.FuzzyFind where
+
 import Control.Monad (join)
 import Data.Array
   ( Array,
