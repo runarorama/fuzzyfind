@@ -13,6 +13,11 @@ build-type:    Simple
 tested-with:   GHC == 8.8.4
 synopsis:      Fuzzy text matching
 description:   A package that provides an API for fuzzy text search in Haskell, using a modified version of the Smith-Waterman algorithm. The search is intended to behave similarly to the excellent fzf tool by Junegunn Choi.
+category:      Text
+
+source-repository head
+  type: git
+  location: https://github.com/runarorama/fuzzyfind
 
 library
   exposed-modules:     Text.FuzzyFind
