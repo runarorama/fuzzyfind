@@ -1,6 +1,6 @@
 cabal-version:       2.2
 name:                fuzzyfind
-version:             0.1.0.0
+version:             0.1.0
 license:             MIT
 license-file:        LICENSE
 author:        Rúnar Bjarnason
@@ -14,6 +14,10 @@ tested-with:   GHC == 8.8.4
 synopsis:      Fuzzy text matching
 description:   A package that provides an API for fuzzy text search in Haskell, using a modified version of the Smith-Waterman algorithm. The search is intended to behave similarly to the excellent fzf tool by Junegunn Choi.
 category:      Text
+extra-source-files: 
+  .gitignore
+  CHANGELOG.md
+  README.markdown
 
 source-repository head
   type: git
