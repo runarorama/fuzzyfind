@@ -38,7 +38,7 @@ import Data.List (sortOn)
 import qualified Data.Sequence as Seq
 import GHC.Generics (Generic)
 
--- | Calling @bestMatch query string@ will return 'Nothing' if @query@ is not a
+-- | @bestMatch query string@ will return 'Nothing' if @query@ is not a
 -- subsequence of @string@. Otherwise, it will return the "best" way to line up
 -- the characters in @query@ with the characters in @string@. Lower-case
 -- characters in the @query@ are assumed to be case-insensitive, and upper-case
@@ -56,7 +56,7 @@ import GHC.Generics (Generic)
 -- datatype), but the lowest score is @0@.
 --
 -- A substring from the query will generate a 'Match', and any characters from
--- the -- input that don't result in a 'Match' will generate a 'Gap'.
+-- the input that don't result in a 'Match' will generate a 'Gap'.
 -- Concatenating all the 'Match' and 'Gap' results should yield the original
 -- input string.
 --
@@ -69,11 +69,12 @@ import GHC.Generics (Generic)
 --   1. Contiguous characters from the query string. For example, @bestMatch "pp"@
 -- will find the last two ps in "pickled pepper".
 --   2. Characters at the beginnings of words. For example, @bestMatch "pp"@
--- will find the first two Ps in "Peter Piper".
---   3. Characters at CamelCase humps. For example, @bestMatch "bm" "BatMan"@
+-- will find the first two Ps in \"Peter Piper\".
+--   3. Characters at CamelCase humps. For example, @bestMatch "bm" \"BatMan\"@
+-- will score higher than @bestMatch "bm" \"Batman\".@
 --   4. The algorithm strongly prefers the first character of the query pattern
 -- to be at the beginning of a word or CamelHump. For example,
--- @bestMatch "mn" "Bat Man"@ will score higher than @bestMatch "atn" "Batman"@.
+-- @bestMatch "mn" \"Bat Man\"@ will score higher than @bestMatch "atn" \"Batman\"@.
 --
 -- All else being equal, matches that occur later in the input string are preferred.
 bestMatch :: String -- ^ The query pattern.
