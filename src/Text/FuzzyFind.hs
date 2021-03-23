@@ -1,3 +1,5 @@
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -37,6 +39,8 @@ import Data.Sequence
 import Data.List (sortOn)
 import qualified Data.Sequence as Seq
 import GHC.Generics (Generic)
+import Data.Text (Text)
+import qualified Data.Text as Text
 
 -- | @bestMatch query string@ will return 'Nothing' if @query@ is not a
 -- subsequence of @string@. Otherwise, it will return the "best" way to line up
@@ -89,7 +93,7 @@ bestMatch = bestMatch' defaultMatchScore
                        defaultConsecutiveBonus
 
 -- | Finds input strings that match all the given input patterns. For each input
--- that matches, it returns one 'Alignment'. The output is sorted by 'score',
+-- that matches, it returns one 'Alignment'. The output is not sorted.
 -- ascending.
 --
 -- For example:
@@ -104,15 +108,24 @@ bestMatch = bestMatch' defaultMatchScore
 -- red macadamia
 --   * *******
 -- @
-fuzzyFind :: [String] -- ^ The query patterns.
-          -> [String] -- ^ The input strings.
-          -> [Alignment]
-fuzzyFind query strings =
-  sortOn score
-    $   strings
-    >>= (\s -> toList
-          $ foldl' (\a q -> (<>) <$> a <*> bestMatch q s) (Just mempty) query
+fuzzyFind
+  :: [String] -- ^ The query patterns.
+  -> [String] -- ^ The input strings.
+  -> [Alignment]
+fuzzyFind = (fmap fst .) . fuzzyFindOn id
+
+-- | A version of 'fuzzyFind' that searches on the given text field of the data.
+fuzzyFindOn :: (a -> String) -> [String] -> [a] -> [(Alignment, a)]
+fuzzyFindOn f query d =
+  d
+    >>= (\s ->
+          toList
+            $   (, s)
+            <$> foldl' (\a q -> (<>) <$> a <*> bestMatch q (f s))
+                       (Just mempty)
+                       query
         )
+
 
 instance Semigroup Alignment where
   Alignment n r <> Alignment m s = Alignment (n + m) (mergeResults r s)
@@ -165,14 +178,17 @@ defaultConsecutiveBonus = defaultGapPenalty 8
 
 -- | Renders an 'Alignment' as a pair of lines with "*" on the lower line
 -- indicating the location of pattern matches.
-highlight :: Alignment -> String
-highlight (Alignment s (Result segments)) =
+highlight' :: Alignment -> Text
+highlight' (Alignment s (Result segments)) =
   foldMap prettySegment segments <> "\n" <> foldMap showGaps segments
  where
-  prettySegment (Gap   xs) = toList xs
-  prettySegment (Match xs) = toList xs
-  showGaps (Gap   xs) = replicate (length xs) ' '
-  showGaps (Match xs) = replicate (length xs) '*'
+  prettySegment (Gap   xs) = xs
+  prettySegment (Match xs) = xs
+  showGaps (Gap   xs) = Text.pack $ replicate (Text.length xs) ' '
+  showGaps (Match xs) = Text.pack $ replicate (Text.length xs) '*'
+
+highlight :: Alignment -> String
+highlight = Text.unpack . highlight'
 
 -- | A highly configurable version of 'bestMatch'.
 bestMatch'
@@ -247,7 +263,7 @@ bestMatch' matchScore mismatchScore gapPenalty boundaryBonus camelCaseBonus firs
       hs ! (i - 1, j - 1) + similarity (a' ! i) (b' ! j) + bonuses ! (i, j)
     scoreGap = maximum [ hs ! (i, j - l) - gapPenalty l | l <- [1 .. j] ]
 
-data ResultSegment = Gap (Seq Char) | Match (Seq Char)
+data ResultSegment = Gap Text | Match Text
   deriving (Eq, Ord, Show, Generic)
 
 -- | Concatenating all the 'ResultSegment's should yield the original input string.
@@ -255,20 +271,20 @@ newtype Result = Result { segments :: Seq ResultSegment }
   deriving (Eq, Ord, Show, Generic)
 
 match :: Char -> Result
-match a = Result [Match [a]]
+match a = Result [Match $ Text.pack [a]]
 
 gap :: Char -> Result
-gap a = Result [Gap [a]]
+gap a = Result [Gap $ Text.pack [a]]
 
 gaps :: String -> Result
-gaps s = Result [Gap . Seq.fromList $ reverse s]
+gaps s = Result [Gap . Text.pack $ reverse s]
 
 reverseResult :: Result -> Result
 reverseResult (Result xs) = Result . Seq.reverse $ reverseSegment <$> xs
 
 reverseSegment :: ResultSegment -> ResultSegment
-reverseSegment (Gap xs) = Gap (Seq.reverse xs)
-reverseSegment (Match xs) = Match (Seq.reverse xs)
+reverseSegment (Gap xs) = Gap (Text.reverse xs)
+reverseSegment (Match xs) = Match (Text.reverse xs)
 
 instance Monoid Result where
   mempty = Result []
@@ -292,25 +308,25 @@ mergeResults as bs = merge as bs
   drop' :: Int -> Result -> Result
   drop' n m | n < 1 = m
   drop' n (Result (viewl -> Gap g :< t)) =
-    Result [Gap (Seq.drop n g)] <> drop' (n - Seq.length g) (Result t)
+    Result [Gap (Text.drop n g)] <> drop' (n - Text.length g) (Result t)
   drop' n (Result (viewl -> Match g :< t)) =
-    Result [Match (Seq.drop n g)] <> drop' (n - Seq.length g) (Result t)
+    Result [Match (Text.drop n g)] <> drop' (n - Text.length g) (Result t)
   merge :: Result -> Result -> Result
   merge (Result Seq.Empty) ys                 = ys
   merge xs                 (Result Seq.Empty) = xs
   merge (Result xs)        (Result ys       ) = case (viewl xs, viewl ys) of
     (Gap g :< t, Gap g' :< t')
-      | Seq.length g <= Seq.length g' -> Result [Gap g]
-      <> merge (Result t) (drop' (Seq.length g) (Result ys))
+      | Text.length g <= Text.length g' -> Result [Gap g]
+      <> merge (Result t) (drop' (Text.length g) (Result ys))
       | otherwise -> Result [Gap g']
-      <> merge (drop' (Seq.length g') (Result xs)) (Result t')
+      <> merge (drop' (Text.length g') (Result xs)) (Result t')
     (Match m :< t, Match m' :< t')
-      | Seq.length m >= Seq.length m' -> Result [Match m]
-      <> merge (Result t) (drop' (Seq.length m) (Result ys))
+      | Text.length m >= Text.length m' -> Result [Match m]
+      <> merge (Result t) (drop' (Text.length m) (Result ys))
       | otherwise -> Result [Match m']
-      <> merge (drop' (Seq.length m') (Result xs)) (Result t')
+      <> merge (drop' (Text.length m') (Result xs)) (Result t')
     (Gap g :< t, Match m' :< t') ->
-      Result [Match m'] <> merge (drop' (Seq.length m') (Result xs)) (Result t')
+      Result [Match m'] <> merge (drop' (Text.length m') (Result xs)) (Result t')
     (Match m :< t, Gap g' :< t') ->
-      Result [Match m] <> merge (Result t) (drop' (Seq.length m) (Result ys))
+      Result [Match m] <> merge (Result t) (drop' (Text.length m) (Result ys))
 
