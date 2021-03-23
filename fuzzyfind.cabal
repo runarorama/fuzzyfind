@@ -1,6 +1,6 @@
 cabal-version:       2.2
 name:                fuzzyfind
-version:             0.1.0
+version:             2.0.0
 license:             MIT
 license-file:        LICENSE
 author:        Rúnar Bjarnason
