@@ -14,15 +14,15 @@ deriving instance NFData ResultSegment
 
 main :: IO ()
 main = defaultMain
-  [ env lipsumFile $ \lipsum -> bgroup
-      "fzf"
-      [ bench "1" . nf (fuzzyFind ["lipsum"]) $ take 1 lipsum
-      , bench "5" . nf (fuzzyFind ["lipsum"]) $ take 5 lipsum
-      , bench "10" . nf (fuzzyFind ["lipsum"]) $ take 10 lipsum
-      , bench "50" . nf (fuzzyFind ["lipsum"]) $ take 100 lipsum
-      ]
+  [ env lipsumFile $ \lipsum ->
+      bgroup "fzf"
+        $   (\n -> bench (show (4 ^ n)) . nf (fuzzyFind ["lipsum"]) $ take
+              (4 ^ n)
+              lipsum
+            )
+        <$> [0 .. 6]
   ]
 
 lipsumFile :: IO [String]
-lipsumFile = lines <$> readFile "tests/lipsum.txt"
+lipsumFile = ((take 50 <$>) . lines) <$> readFile "tests/lipsum.txt"
 
