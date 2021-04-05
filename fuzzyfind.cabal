@@ -10,7 +10,7 @@ homepage:      http://github.com/runarorama/fuzzyfind/
 bug-reports:   http://github.com/runarorama/fuzzyfind/issues
 copyright:     Copyright (C) 2021 Unison Computing
 build-type:    Simple
-tested-with:   GHC == 8.8.4
+tested-with:   GHC == 8.8.4, GHC == 8.10.4
 synopsis:      Fuzzy text matching
 description:   A package that provides an API for fuzzy text search in Haskell, using a modified version of the Smith-Waterman algorithm. The search is intended to behave similarly to the excellent fzf tool by Junegunn Choi.
 category:      Text
