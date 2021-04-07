@@ -1,10 +1,10 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# OPTIONS_GHC -fno-warn-orphans -fno-warn-type-defaults #-}
 
 module Main where
 
 import Criterion.Main
-import Data.List
 import Text.FuzzyFind
 import Control.DeepSeq
 

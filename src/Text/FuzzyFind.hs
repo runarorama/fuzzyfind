@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -29,6 +30,7 @@ import Data.Massiv.Array
     forM_
   )
 import qualified Data.Massiv.Array as A
+import qualified Data.Massiv.Array.Unsafe as A
 import qualified Data.Massiv.Array.Mutable as M
 import Data.Char (isAlphaNum, isLower, isUpper, toLower)
 import Data.Foldable (maximumBy, toList, foldl')
@@ -42,11 +44,11 @@ import Data.Sequence
     viewr,
     (<|)
   )
-import Data.List (sortOn)
 import qualified Data.Sequence as Seq
 import GHC.Generics (Generic)
 import Data.Text (Text)
 import qualified Data.Text as Text
+import Control.Monad.ST (runST)
 
 -- | @bestMatch query string@ will return 'Nothing' if @query@ is not a
 -- subsequence of @string@. Otherwise, it will return the "best" way to line up
@@ -182,17 +184,17 @@ defaultConsecutiveBonus = 11
 
 -- | Renders an 'Alignment' as a pair of lines with "*" on the lower line
 -- indicating the location of pattern matches.
-highlight' :: Alignment -> Text
-highlight' (Alignment s (Result segments)) =
-  foldMap prettySegment segments <> "\n" <> foldMap showGaps segments
- where
-  prettySegment (Gap   xs) = xs
-  prettySegment (Match xs) = xs
-  showGaps (Gap   xs) = Text.pack $ replicate (Text.length xs) ' '
-  showGaps (Match xs) = Text.pack $ replicate (Text.length xs) '*'
+-- highlight' :: Alignment -> Text
+-- highlight' (Alignment s (Result segments)) =
+--   foldMap prettySegment segments <> "\n" <> foldMap showGaps segments
+--  where
+--   prettySegment (Gap   xs) = xs
+--   prettySegment (Match xs) = xs
+--   showGaps (Gap   xs) = Text.pack $ replicate (Text.length xs) ' '
+--   showGaps (Match xs) = Text.pack $ replicate (Text.length xs) '*'
 
-highlight :: Alignment -> String
-highlight = Text.unpack . highlight'
+-- highlight :: Alignment -> String
+-- highlight = Text.unpack . highlight'
 
 -- | A highly configurable version of 'bestMatch'.
 bestMatch'
@@ -209,33 +211,47 @@ bestMatch'
   -> String -- ^ The input string.
   -> Maybe Alignment
 bestMatch' matchScore mismatchScore gapPenalty boundaryBonus camelCaseBonus firstCharBonusMultiplier consecutiveBonus query str
-  = Alignment (totalScore m nx) . reverseResult <$> traceback
+  = Alignment (totalScore m nx) . Result <$> traceback
  where
   totalScore i j =
     if i > m then 0 else (A.index' hs (i :. j)) + (A.index' bonuses (i :. j))
   -- table = unlines
   --   [ unwords
-  --     $ (if y > 0 then show $ b' ! y else "   ")
+  --     $ (if y > 0 then show $ str' ! y else "   ")
   --     : [ show (totalScore x y) | x <- [0 .. m] ]
   --   | y <- [0 .. n]
   --   ]
   similarity a b =
     if a == b || a == toLower b then matchScore else mismatchScore
-  traceback = go (gaps (drop nx str)) m nx
-  go r 0 j = pure $ r <> gaps (take j str)
-  go _ _ 0 = Nothing
-  go r i j = if similarity (A.index' a' (i - 1)) (A.index' b' (j - 1)) > 0
-    then go (r <> match (A.index' b' (j - 1))) (i - 1) (j - 1)
-    else go (r <> gap (A.index' b' (j - 1))) i (j - 1)
-  nx = localMax m n
-  localMax m n = maximumBy
-    (\b d -> compare (totalScore m b) (totalScore m d))
-    [ j | j <- [1 .. n] ]
-  a' = A.fromList A.Seq query :: Array A.P A.Ix1 Char
-  b' = A.fromList A.Seq str :: Array A.P A.Ix1 Char
-  m  = A.unSz $ A.size a'
-  n  = A.unSz $ A.size b'
-  hs :: Array A.P Ix2 Int
+  traceback :: Maybe (Seq ResultSegment)
+  traceback = (<> gaps (drop nx str)) <$> go [] [] (-1) m nx
+  go r m currOp 0 j = (gaps (take j str) <>) <$> case m of
+    [] -> Just r
+    _  -> case currOp of
+      1  -> Just (r :|> Match (reverse m))
+      0  -> Just (r :|> Gap (reverse m))
+      -1 -> Nothing
+  go _ _ _ _ 0 = Nothing
+  go r m currOp i j =
+    if similarity (A.index' query' (i - 1)) (A.index' str' (j - 1)) > 0
+      then case currOp of
+        0 ->
+          go (r :|> Gap (reverse m)) [A.index' str' (j - 1)] 1 (i - 1) (j - 1)
+        _ -> go r (A.index' str' (j - 1) : m) 1 (i - 1) (j - 1)
+      else case currOp of
+        1 -> go (r :|> Match (reverse m)) [A.index' str' (j - 1)] 0 i (j - 1)
+        _ -> go r (A.index' str' (j - 1) : m) 0 i (j - 1)
+  nx = localMax m n 1 0 0
+  localMax m n j r s = if j > n
+    then r
+    else
+      let s' = totalScore m j
+      in  localMax m n (j + 1) (if s' > s then j else r) s'
+  query' = A.fromList A.Seq query :: Array A.U A.Ix1 Char
+  str'   = A.fromList A.Seq str :: Array A.U A.Ix1 Char
+  m      = A.unSz $ A.size query'
+  n      = A.unSz $ A.size str'
+  hs :: Array A.U Ix2 Int
   hs = M.createArrayST_ (A.Sz (m + 1 :. n + 1)) $ \marr -> do
     A.forM_ ((0 :. 0) ... (m :. n)) $ \(i :. j) -> if (i == 0 || j == 0)
       then M.writeM marr (i :. j) 0
@@ -244,31 +260,35 @@ bestMatch' matchScore mismatchScore gapPenalty boundaryBonus camelCaseBonus firs
           hprev <- M.readM marr ((i - 1) :. (j - 1))
           pure
             $ hprev
-            + similarity (A.index' a' (i - 1)) (A.index' b' (j - 1))
+            + similarity (A.index' query' (i - 1)) (A.index' str' (j - 1))
             + A.index' bonuses (i :. j)
         scoreGap <- do
-          (arr :: Array A.P A.Ix1 Int) <- forM (1 ... j) $ \l ->
+          (arr :: Array A.U A.Ix1 Int) <- forM (1 ... j) $ \l ->
             (\x -> x - (l + gapPenalty)) <$> M.readM marr (i :. (j - l))
           pure . fromMaybe 0 $ A.maximumM arr
         M.writeM marr (i :. j) (scoreMatch `max` scoreGap `max` 0)
-  bonuses = A.makeArray A.Seq (A.Sz (m + 1 :. n + 1)) f :: Array A.P Ix2 Int
+  bonuses = A.makeArray A.Seq (A.Sz (m + 1 :. n + 1)) f :: Array A.U Ix2 Int
     where f (i :. j) = bonus i j
   bonus :: Int -> Int -> Int
   bonus 0 j = 0
   bonus i 0 = 0
-  bonus i j = if similarity (A.index' a' (i - 1)) (A.index' b' (j - 1)) > 0
-    then multiplier * (boundary + camel + consecutive)
-    else 0
+  bonus i j =
+    if similarity (A.index' query' (i - 1)) (A.index' str' (j - 1)) > 0
+      then multiplier * (boundary + camel + consecutive)
+      else 0
    where
     boundary =
-      if j < 2 || isAlphaNum (A.index' b' (j - 1)) && not
-           (isAlphaNum (A.index' b' (j - 2)))
+      if j < 2 || isAlphaNum (A.index' str' (j - 1)) && not
+           (isAlphaNum (A.index' str' (j - 2)))
         then boundaryBonus
         else 0
     camel =
-      if j > 1 && isLower (A.index' b' (j - 2)) && isUpper (A.index' b' (j - 1))
-        then camelCaseBonus
-        else 0
+      if j > 1 && isLower (A.index' str' (j - 2)) && isUpper
+         (A.index' str' (j - 1))
+      then
+        camelCaseBonus
+      else
+        0
     multiplier = if i == 1 then firstCharBonusMultiplier else 1
     consecutive =
       let
@@ -277,55 +297,29 @@ bestMatch' matchScore mismatchScore gapPenalty boundaryBonus camelCaseBonus firs
             >  0
             && j
             >  0
-            && similarity (A.index' a' (i - 1)) (A.index' b' (j - 1))
+            && similarity (A.index' query' (i - 1)) (A.index' str' (j - 1))
             >  0
         afterMatch =
           i
             >  1
             && j
             >  1
-            && similarity (A.index' a' (i - 2)) (A.index' b' (j - 2))
+            && similarity (A.index' query' (i - 2)) (A.index' str' (j - 2))
             >  0
         beforeMatch =
-          i < m && j < n && similarity (A.index' a' i) (A.index' b' j) > 0
+          i < m && j < n && similarity (A.index' query' i) (A.index' str' j) > 0
       in
         if similar && (afterMatch || beforeMatch) then consecutiveBonus else 0
-  -- h 0 _ = 0
-  -- h _ 0 = 0
-  -- h i j = scoreMatch `max` scoreGap j 0
-  --  where
-  --   scoreMatch =
-  --     (A.index' hs (i - 1 :. j - 1))
-  --       + similarity (A.index' a' i) (A.index' b' j)
-  --       + A.index' bonuses (i :. j)
-  --   scoreGap l x = if l <= 1
-  --     then x
-  --     else
-  --       let y = A.index' hs (i :. j - l) - (l + gapPenalty)
-  --       in  scoreGap (l - 1) (max x y)
 
-data ResultSegment = Gap !Text | Match !Text
+gaps :: String -> Seq ResultSegment
+gaps s = [Gap s]
+
+data ResultSegment = Gap !String | Match !String
   deriving (Eq, Ord, Show, Generic)
 
 -- | Concatenating all the 'ResultSegment's should yield the original input string.
 newtype Result = Result { segments :: Seq ResultSegment }
   deriving (Eq, Ord, Show, Generic)
-
-match :: Char -> Result
-match a = Result [Match $ Text.pack [a]]
-
-gap :: Char -> Result
-gap a = Result [Gap $ Text.pack [a]]
-
-gaps :: String -> Result
-gaps s = Result [Gap . Text.pack $ reverse s]
-
-reverseResult :: Result -> Result
-reverseResult (Result xs) = Result . Seq.reverse $ reverseSegment <$> xs
-
-reverseSegment :: ResultSegment -> ResultSegment
-reverseSegment (Gap xs) = Gap (Text.reverse xs)
-reverseSegment (Match xs) = Match (Text.reverse xs)
 
 instance Monoid Result where
   mempty = Result []
@@ -349,24 +343,24 @@ mergeResults as bs = merge as bs
   drop' :: Int -> Result -> Result
   drop' n m | n < 1 = m
   drop' n (Result (viewl -> Gap g :< t)) =
-    Result [Gap (Text.drop n g)] <> drop' (n - Text.length g) (Result t)
+    Result [Gap (drop n g)] <> drop' (n - length g) (Result t)
   drop' n (Result (viewl -> Match g :< t)) =
-    Result [Match (Text.drop n g)] <> drop' (n - Text.length g) (Result t)
+    Result [Match (drop n g)] <> drop' (n - length g) (Result t)
   merge :: Result -> Result -> Result
   merge (Result Seq.Empty) ys                 = ys
   merge xs                 (Result Seq.Empty) = xs
   merge (Result xs)        (Result ys       ) = case (viewl xs, viewl ys) of
     (Gap g :< t, Gap g' :< t')
-      | Text.length g <= Text.length g' -> Result [Gap g]
-      <> merge (Result t) (drop' (Text.length g) (Result ys))
+      | length g <= length g' -> Result [Gap g]
+      <> merge (Result t) (drop' (length g) (Result ys))
       | otherwise -> Result [Gap g']
-      <> merge (drop' (Text.length g') (Result xs)) (Result t')
+      <> merge (drop' (length g') (Result xs)) (Result t')
     (Match m :< t, Match m' :< t')
-      | Text.length m >= Text.length m' -> Result [Match m]
-      <> merge (Result t) (drop' (Text.length m) (Result ys))
+      | length m >= length m' -> Result [Match m]
+      <> merge (Result t) (drop' (length m) (Result ys))
       | otherwise -> Result [Match m']
-      <> merge (drop' (Text.length m') (Result xs)) (Result t')
+      <> merge (drop' (length m') (Result xs)) (Result t')
     (Gap g :< t, Match m' :< t') ->
-      Result [Match m'] <> merge (drop' (Text.length m') (Result xs)) (Result t')
+      Result [Match m'] <> merge (drop' (length m') (Result xs)) (Result t')
     (Match m :< t, Gap g' :< t') ->
-      Result [Match m] <> merge (Result t) (drop' (Text.length m) (Result ys))
+      Result [Match m] <> merge (Result t) (drop' (length m) (Result ys))
