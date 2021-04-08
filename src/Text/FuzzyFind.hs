@@ -89,8 +89,8 @@ import Control.Monad.ST (runST)
 -- @bestMatch "mn" \"Bat Man\"@ will score higher than @bestMatch "atn" \"Batman\"@.
 --
 -- All else being equal, matches that occur later in the input string are preferred.
-bestMatch :: String -- ^ The query pattern.
-          -> String -- ^ The input string.
+bestMatch :: Text -- ^ The query pattern.
+          -> Text -- ^ The input string.
           -> Maybe Alignment
 bestMatch = bestMatch' defaultMatchScore
                        defaultMismatchScore
@@ -117,13 +117,13 @@ bestMatch = bestMatch' defaultMatchScore
 --   * *******
 -- @
 fuzzyFind
-  :: [String] -- ^ The query patterns.
-  -> [String] -- ^ The input strings.
+  :: [Text] -- ^ The query patterns.
+  -> [Text] -- ^ The input strings.
   -> [Alignment]
 fuzzyFind = (fmap fst .) . fuzzyFindOn id
 
 -- | A version of 'fuzzyFind' that searches on the given text field of the data.
-fuzzyFindOn :: (a -> String) -> [String] -> [a] -> [(Alignment, a)]
+fuzzyFindOn :: (a -> Text) -> [Text] -> [a] -> [(Alignment, a)]
 fuzzyFindOn f query d =
   d
     >>= (\s ->
@@ -207,8 +207,8 @@ bestMatch'
          --   See 'defaultFirstCharBonusMultiplier'.
   -> Int -- ^ Bonus score for each consecutive character matched.
          --   See 'defaultFirstCharBonusMultiplier'.
-  -> String -- ^ The query pattern.
-  -> String -- ^ The input string.
+  -> Text -- ^ The query pattern.
+  -> Text -- ^ The input string.
   -> Maybe Alignment
 bestMatch' matchScore mismatchScore gapPenalty boundaryBonus camelCaseBonus firstCharBonusMultiplier consecutiveBonus query str
   = Alignment (totalScore m nx) . Result <$> traceback
@@ -224,8 +224,8 @@ bestMatch' matchScore mismatchScore gapPenalty boundaryBonus camelCaseBonus firs
   similarity a b =
     if a == b || a == toLower b then matchScore else mismatchScore
   traceback :: Maybe (Seq ResultSegment)
-  traceback = (<> gaps (drop nx str)) <$> go [] [] (-1) m nx
-  go r m currOp 0 j = (gaps (take j str) <>) <$> case m of
+  traceback = (<> gaps (drop nx (Text.unpack str))) <$> go [] [] (-1) m nx
+  go r m currOp 0 j = (gaps (take j (Text.unpack str)) <>) <$> case m of
     [] -> Just r
     _  -> case currOp of
       1  -> Just (r :|> Match (reverse m))
@@ -233,24 +233,22 @@ bestMatch' matchScore mismatchScore gapPenalty boundaryBonus camelCaseBonus firs
       -1 -> Nothing
   go _ _ _ _ 0 = Nothing
   go r m currOp i j =
-    if similarity (A.index' query' (i - 1)) (A.index' str' (j - 1)) > 0
+    if similarity (Text.index query (i - 1)) (Text.index str (j - 1)) > 0
       then case currOp of
         0 ->
-          go (r :|> Gap (reverse m)) [A.index' str' (j - 1)] 1 (i - 1) (j - 1)
-        _ -> go r (A.index' str' (j - 1) : m) 1 (i - 1) (j - 1)
+          go (r :|> Gap (reverse m)) [Text.index str (j - 1)] 1 (i - 1) (j - 1)
+        _ -> go r (Text.index str (j - 1) : m) 1 (i - 1) (j - 1)
       else case currOp of
-        1 -> go (r :|> Match (reverse m)) [A.index' str' (j - 1)] 0 i (j - 1)
-        _ -> go r (A.index' str' (j - 1) : m) 0 i (j - 1)
+        1 -> go (r :|> Match (reverse m)) [Text.index str (j - 1)] 0 i (j - 1)
+        _ -> go r (Text.index str (j - 1) : m) 0 i (j - 1)
   nx = localMax m n 1 0 0
   localMax m n j r s = if j > n
     then r
     else
       let s' = totalScore m j
       in  localMax m n (j + 1) (if s' > s then j else r) s'
-  query' = A.fromList A.Seq query :: Array A.U A.Ix1 Char
-  str'   = A.fromList A.Seq str :: Array A.U A.Ix1 Char
-  m      = A.unSz $ A.size query'
-  n      = A.unSz $ A.size str'
+  m = Text.length query
+  n = Text.length str
   hs :: Array A.U Ix2 Int
   hs = M.createArrayST_ (A.Sz (m + 1 :. n + 1)) $ \marr -> do
     A.forM_ ((0 :. 0) ... (m :. n)) $ \(i :. j) -> if (i == 0 || j == 0)
@@ -260,7 +258,7 @@ bestMatch' matchScore mismatchScore gapPenalty boundaryBonus camelCaseBonus firs
           hprev <- M.readM marr ((i - 1) :. (j - 1))
           pure
             $ hprev
-            + similarity (A.index' query' (i - 1)) (A.index' str' (j - 1))
+            + similarity (Text.index query (i - 1)) (Text.index str (j - 1))
             + A.index' bonuses (i :. j)
         scoreGap <- do
           (arr :: Array A.U A.Ix1 Int) <- forM (1 ... j) $ \l ->
@@ -273,18 +271,18 @@ bestMatch' matchScore mismatchScore gapPenalty boundaryBonus camelCaseBonus firs
   bonus 0 j = 0
   bonus i 0 = 0
   bonus i j =
-    if similarity (A.index' query' (i - 1)) (A.index' str' (j - 1)) > 0
+    if similarity (Text.index query (i - 1)) (Text.index str (j - 1)) > 0
       then multiplier * (boundary + camel + consecutive)
       else 0
    where
     boundary =
-      if j < 2 || isAlphaNum (A.index' str' (j - 1)) && not
-           (isAlphaNum (A.index' str' (j - 2)))
+      if j < 2 || isAlphaNum (Text.index str (j - 1)) && not
+           (isAlphaNum (Text.index str (j - 2)))
         then boundaryBonus
         else 0
     camel =
-      if j > 1 && isLower (A.index' str' (j - 2)) && isUpper
-         (A.index' str' (j - 1))
+      if j > 1 && isLower (Text.index str (j - 2)) && isUpper
+         (Text.index str (j - 1))
       then
         camelCaseBonus
       else
@@ -297,19 +295,25 @@ bestMatch' matchScore mismatchScore gapPenalty boundaryBonus camelCaseBonus firs
             >  0
             && j
             >  0
-            && similarity (A.index' query' (i - 1)) (A.index' str' (j - 1))
+            && similarity (Text.index query (i - 1)) (Text.index str (j - 1))
             >  0
         afterMatch =
           i
             >  1
             && j
             >  1
-            && similarity (A.index' query' (i - 2)) (A.index' str' (j - 2))
+            && similarity (Text.index query (i - 2)) (Text.index str (j - 2))
             >  0
         beforeMatch =
-          i < m && j < n && similarity (A.index' query' i) (A.index' str' j) > 0
+          i
+            <  m
+            && j
+            <  n
+            && similarity (Text.index query i) (Text.index str j)
+            >  0
       in
         if similar && (afterMatch || beforeMatch) then consecutiveBonus else 0
+
 
 gaps :: String -> Seq ResultSegment
 gaps s = [Gap s]
