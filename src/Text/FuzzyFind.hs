@@ -177,7 +177,7 @@ defaultGapPenalty :: Int
 defaultGapPenalty = 3
 
 -- | We give a bonus to consecutive matching characters.
--- A number about the same as the `boundaryBonus` will strongly prefer
+-- A number about the same as the boundary bonus will prefer
 -- runs of consecutive characters vs finding acronyms.
 defaultConsecutiveBonus :: Int
 defaultConsecutiveBonus = 11
