@@ -36,6 +36,10 @@ import Data.Char (isAlphaNum, isLower, isUpper, toLower)
 import Data.Foldable (maximumBy, toList, foldl')
 import Data.Function (on)
 import Data.Maybe (fromMaybe)
+import GHC.Generics (Generic)
+import Data.Text (Text)
+import qualified Data.Text as Text
+import Control.Monad.ST (runST)
 import Data.Sequence
   ( Seq (..),
     ViewL (..),
@@ -45,10 +49,7 @@ import Data.Sequence
     (<|)
   )
 import qualified Data.Sequence as Seq
-import GHC.Generics (Generic)
-import Data.Text (Text)
-import qualified Data.Text as Text
-import Control.Monad.ST (runST)
+
 
 -- | @bestMatch query string@ will return 'Nothing' if @query@ is not a
 -- subsequence of @string@. Otherwise, it will return the "best" way to line up
@@ -182,19 +183,21 @@ defaultGapPenalty = 3
 defaultConsecutiveBonus :: Int
 defaultConsecutiveBonus = 11
 
+segmentToString :: ResultSegment -> String
+segmentToString (Gap   xs) = xs
+segmentToString (Match xs) = xs
+
 -- | Renders an 'Alignment' as a pair of lines with "*" on the lower line
 -- indicating the location of pattern matches.
--- highlight' :: Alignment -> Text
--- highlight' (Alignment s (Result segments)) =
---   foldMap prettySegment segments <> "\n" <> foldMap showGaps segments
---  where
---   prettySegment (Gap   xs) = xs
---   prettySegment (Match xs) = xs
---   showGaps (Gap   xs) = Text.pack $ replicate (Text.length xs) ' '
---   showGaps (Match xs) = Text.pack $ replicate (Text.length xs) '*'
+highlight :: Alignment -> String
+highlight (Alignment s (Result segments)) =
+  foldMap segmentToString segments <> "\n" <> foldMap showGaps segments
+ where
+  showGaps (Gap   xs) = replicate (length xs) ' '
+  showGaps (Match xs) = replicate (length xs) '*'
 
--- highlight :: Alignment -> String
--- highlight = Text.unpack . highlight'
+highlight' :: Alignment -> Text
+highlight' = Text.pack . highlight
 
 -- | A highly configurable version of 'bestMatch'.
 bestMatch'
@@ -211,7 +214,7 @@ bestMatch'
   -> String -- ^ The input string.
   -> Maybe Alignment
 bestMatch' matchScore mismatchScore gapPenalty boundaryBonus camelCaseBonus firstCharBonusMultiplier consecutiveBonus query str
-  = Alignment (totalScore m nx) . Result <$> traceback
+  = Alignment (totalScore m nx) . (Result . Seq.fromList) <$> traceback
  where
   totalScore i j =
     if i > m then 0 else (A.index' hs (i :. j)) + (A.index' bonuses (i :. j))
@@ -223,23 +226,23 @@ bestMatch' matchScore mismatchScore gapPenalty boundaryBonus camelCaseBonus firs
   --   ]
   similarity a b =
     if a == b || a == toLower b then matchScore else mismatchScore
-  traceback :: Maybe (Seq ResultSegment)
-  traceback = (<> gaps (drop nx str)) <$> go [] [] (-1) m nx
-  go r m currOp 0 j = (gaps (take j str) <>) <$> case m of
+  traceback :: Maybe [ResultSegment]
+  traceback = go [Gap $ drop nx str] [] (-1) m nx
+  go r m currOp 0 j = (Gap (take j str) :) <$> case m of
     [] -> Just r
     _  -> case currOp of
-      1  -> Just (r :|> Match (reverse m))
-      0  -> Just (r :|> Gap (reverse m))
+      1  -> Just (Match m : r)
+      0  -> Just (Gap m : r)
       -1 -> Nothing
   go _ _ _ _ 0 = Nothing
   go r m currOp i j =
     if similarity (A.index' query' (i - 1)) (A.index' str' (j - 1)) > 0
       then case currOp of
         0 ->
-          go (r :|> Gap (reverse m)) [A.index' str' (j - 1)] 1 (i - 1) (j - 1)
+          go (Gap m : r) [A.index' str' (j - 1)] 1 (i - 1) (j - 1)
         _ -> go r (A.index' str' (j - 1) : m) 1 (i - 1) (j - 1)
       else case currOp of
-        1 -> go (r :|> Match (reverse m)) [A.index' str' (j - 1)] 0 i (j - 1)
+        1 -> go (Match m : r) [A.index' str' (j - 1)] 0 i (j - 1)
         _ -> go r (A.index' str' (j - 1) : m) 0 i (j - 1)
   nx = localMax m n 1 0 0
   localMax m n j r s = if j > n
@@ -311,8 +314,8 @@ bestMatch' matchScore mismatchScore gapPenalty boundaryBonus camelCaseBonus firs
       in
         if similar && (afterMatch || beforeMatch) then consecutiveBonus else 0
 
-gaps :: String -> Seq ResultSegment
-gaps s = [Gap s]
+-- gaps :: String -> Seq ResultSegment
+-- gaps s = [Gap s]
 
 data ResultSegment = Gap !String | Match !String
   deriving (Eq, Ord, Show, Generic)
