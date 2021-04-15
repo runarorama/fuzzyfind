@@ -100,6 +100,7 @@ bestMatch = bestMatch' defaultMatchScore
                        defaultCamelCaseBonus
                        defaultFirstCharBonusMultiplier
                        defaultConsecutiveBonus
+                       defaultLaterBonusMultiplier
 
 -- | Finds input strings that match all the given input patterns. For each input
 -- that matches, it returns one 'Alignment'. The output is not sorted.
@@ -183,6 +184,13 @@ defaultGapPenalty = 3
 defaultConsecutiveBonus :: Int
 defaultConsecutiveBonus = 11
 
+-- | We give a bonus for matches that occur later in the input string.
+-- If this is e.g. 100, we give one bonus point for each percentage of the
+-- length of the input that the match occurs at (100 points for the last
+-- character, 50 for characters in the middle, and so on).
+defaultLaterBonusMultiplier :: Int
+defaultLaterBonusMultiplier = 5
+
 segmentToString :: ResultSegment -> String
 segmentToString (Gap   xs) = xs
 segmentToString (Match xs) = xs
@@ -210,10 +218,13 @@ bestMatch'
          --   See 'defaultFirstCharBonusMultiplier'.
   -> Int -- ^ Bonus score for each consecutive character matched.
          --   See 'defaultFirstCharBonusMultiplier'.
+  -> Int -- ^ Bonus multiplier for matching later characters of the input.
+         --   E.g. if this is 10, the bonus for matching the last character of
+         --   the input is 10, and 5 for characters close to the middle, and so on.
   -> String -- ^ The query pattern.
   -> String -- ^ The input string.
   -> Maybe Alignment
-bestMatch' matchScore mismatchScore gapPenalty boundaryBonus camelCaseBonus firstCharBonusMultiplier consecutiveBonus query str
+bestMatch' matchScore mismatchScore gapPenalty boundaryBonus camelCaseBonus firstCharBonusMultiplier consecutiveBonus laterBonusMultiplier query str
   = Alignment (totalScore m nx) . (Result . Seq.fromList) <$> traceback
  where
   totalScore i j =
@@ -227,19 +238,19 @@ bestMatch' matchScore mismatchScore gapPenalty boundaryBonus camelCaseBonus firs
   similarity a b =
     if a == b || a == toLower b then matchScore else mismatchScore
   traceback :: Maybe [ResultSegment]
-  traceback = go [Gap $ drop nx str] [] (-1) m nx
-  go r m currOp 0 j = (Gap (take j str) :) <$> case m of
-    [] -> Just r
-    _  -> case currOp of
-      1  -> Just (Match m : r)
-      0  -> Just (Gap m : r)
-      -1 -> Nothing
+  traceback = go (if nx < n then [Gap $ drop nx str] else []) [] (-1) m nx
+  go r m currOp 0 j =
+    (if j > 0 then (Gap (take j str) :) else id) <$> case m of
+      [] -> Just r
+      _  -> case currOp of
+        1  -> Just (Match m : r)
+        0  -> Just (Gap m : r)
+        -1 -> Nothing
   go _ _ _ _ 0 = Nothing
   go r m currOp i j =
     if similarity (A.index' query' (i - 1)) (A.index' str' (j - 1)) > 0
       then case currOp of
-        0 ->
-          go (Gap m : r) [A.index' str' (j - 1)] 1 (i - 1) (j - 1)
+        0 -> go (Gap m : r) [A.index' str' (j - 1)] 1 (i - 1) (j - 1)
         _ -> go r (A.index' str' (j - 1) : m) 1 (i - 1) (j - 1)
       else case currOp of
         1 -> go (Match m : r) [A.index' str' (j - 1)] 0 i (j - 1)
@@ -277,7 +288,13 @@ bestMatch' matchScore mismatchScore gapPenalty boundaryBonus camelCaseBonus firs
   bonus i 0 = 0
   bonus i j =
     if similarity (A.index' query' (i - 1)) (A.index' str' (j - 1)) > 0
-      then multiplier * (boundary + camel + consecutive)
+      then
+        multiplier
+          * ( boundary
+            + camel
+            + consecutive
+            + (if n > 0 then (j * laterBonusMultiplier) `div` n else 0)
+            )
       else 0
    where
     boundary =
